@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stickman Hook - Trampoline Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a2e; touch-action: none; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 0; width: 100%; pointer-events: none; z-index: 5; }
+        #level-display { color: white; font-size: 35px; text-align: center; margin-top: 15px; text-shadow: 2px 2px 5px #000; }
+        #home-btn { 
+            position: absolute; top: 20px; left: 20px; font-size: 30px; 
+            background: white; border-radius: 50%; width: 55px; height: 55px; 
+            display: flex; align-items: center; justify-content: center; 
+            cursor: pointer; pointer-events: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        }
+        #menu { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.95); display: none; flex-direction: column; 
+            align-items: center; justify-content: center; z-index: 10;
+        }
+        .menu-btn { 
+            width: 280px; padding: 20px; margin: 15px; font-size: 20px; font-weight: bold;
+            border: none; border-radius: 12px; cursor: pointer; pointer-events: auto;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        #btn-v1 { background: #3498db; color: white; }
+        #btn-v2 { background: #444; color: #888; cursor: not-allowed; }
+        #btn-v2.unlocked { background: #e67e22; color: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="home-btn">🏠</div>
+        <div id="level-display">שלב 1</div>
+    </div>
+
+    <div id="menu">
+        <h1 style="color:white; margin-bottom: 30px;">בחר גרסה</h1>
+        <button id="btn-v1" class="menu-btn">גרסה 1 (מתחילים)</button>
+        <button id="btn-v2" class="menu-btn"><span id="lock-icon">🔒</span> גרסה 2 (אתגר המקצוענים)</button>
+        <p id="lock-msg" style="color: #aaa; font-size: 14px; margin-top: 10px;">סיימו שלב 25 בגרסה 1 כדי לפתוח</p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const levelDisplay = document.getElementById('level-display');
+const homeBtn = document.getElementById('home-btn');
+const menu = document.getElementById('menu');
+const btnV2 = document.getElementById('btn-v2');
+
+let currentMode = 1; 
+let levelV1 = 1;
+let levelV2 = 1; 
+let isHooked = false;
+let currentHook = null;
+let isPaused = false;
+let isV2Unlocked = false;
+
+const player = { x: 100, y: 200, vx: 12, vy: 0, radius: 12, dist: 0 };
+let hooks = [];
+let obstacles = [];
+let trampolines = [];
+let finishLineX = 0;
+
+function checkUnlock() {
+    if (levelV1 > 25) {
+        isV2Unlocked = true;
+        btnV2.classList.add('unlocked');
+        document.getElementById('lock-icon').innerText = '🔥';
+        document.getElementById('lock-msg').innerText = "מצב אתגר פתוח!";
+        document.getElementById('lock-msg').style.color = "#e67e22";
+    }
+}
+
+function initLevel() {
+    checkUnlock();
+    isPaused = false;
+    isHooked = false;
+    currentHook = null;
+    menu.style.display = 'none';
+    
+    let currentLevel = (currentMode === 1) ? levelV1 : levelV2;
+    levelDisplay.innerText = `שלב ${currentLevel}`;
+    
+    hooks = []; obstacles = []; trampolines = [];
+    
+    const spacing = (currentMode === 1) ? 280 : 350;
+    const baseY = window.innerHeight / 3.5;
+
+    for (let i = 0; i < 14; i++) {
+        let yPos = (currentMode === 1) ? baseY : baseY + (Math.random() - 0.5) * 200;
+        hooks.push({ x: 400 + i * spacing, y: yPos, isLast: false });
+    }
+    
+    finishLineX = 400 + 14 * spacing + 200; 
+    hooks.push({ x: finishLineX - 120, y: baseY, isLast: true });
+
+    // יצירת מכשולים
+    let obstacleChance = (currentMode === 1) ? 0.8 : 0.65;
+    let obsHeight = (currentMode === 1) ? 100 : 150;
+
+    for (let i = 0; i < 13; i++) {
+        if (Math.random() > obstacleChance) {
+            let onTop = Math.random() > 0.5;
+            obstacles.push({ x: 550 + i * spacing, y: onTop ? 0 : window.innerHeight - obsHeight, w: 25, h: obsHeight });
+        }
+    }
+
+    // יצירת טרמפולינות - רק משלב 25 ומעלה בכל גרסה
+    if (currentLevel >= 25) {
+        for (let i = 0; i < 10; i++) {
+            trampolines.push({
+                x: 600 + i * (finishLineX / 10),
+                y: window.innerHeight - 40,
+                w: 60,
+                h: 20
+            });
+        }
+    }
+
+    resetPlayer();
+}
+
+function resetPlayer() {
+    player.x = 100; player.y = 200; 
+    player.vx = (currentMode === 1) ? 12 : 9;
+    player.vy = 0;
+    isHooked = false;
+}
+
+function handleInput(e) {
+    if (isPaused) return;
+    if (e.target === homeBtn) return;
+    e.preventDefault();
+
+    if (currentMode === 1) {
+        if (isHooked) {
+            let shrink = (currentHook && currentHook.isLast) ? 70 : 50;
+            player.dist = Math.max(30, player.dist - shrink);
+            player.vx += (currentHook.isLast) ? 4.0 : 2.5; 
+        } else {
+            currentHook = getClosestHook();
+            if (currentHook) {
+                player.dist = Math.hypot(player.x - currentHook.x, player.y - currentHook.y);
+                isHooked = true;
+            }
+        }
+    } else {
+        if (!isHooked) {
+            currentHook = getClosestHook();
+            if (currentHook) {
+                isHooked = true;
+                let dx = currentHook.x - player.x;
+                let dy = currentHook.y - player.y;
+                player.vx += (dx * 0.07) + 10; 
+                player.vy = (dy * 0.07) - 6;  
+                setTimeout(() => { isHooked = false; }, 140);
+            }
+        }
+    }
+}
+
+function getClosestHook() {
+    let targets = hooks.filter(h => h.x > player.x - 20 && h.x < player.x + 650);
+    if (targets.length === 0) return hooks[hooks.length - 1];
+    return targets.reduce((prev, curr) => {
+        const d1 = Math.hypot(player.x - prev.x, player.y - prev.y);
+        const d2 = Math.hypot(player.x - curr.x, player.y - curr.y);
+        return d2 < d1 ? curr : prev;
+    });
+}
+
+homeBtn.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    isPaused = true;
+    checkUnlock();
+    menu.style.display = 'flex';
+});
+
+document.getElementById('btn-v1').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    currentMode = 1;
+    initLevel();
+});
+
+btnV2.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    if (isV2Unlocked) {
+        currentMode = 2;
+        initLevel();
+    }
+});
+
+canvas.addEventListener('mousedown', handleInput);
+window.addEventListener('mouseup', () => { if(currentMode === 1) isHooked = false; });
+canvas.addEventListener('touchstart', handleInput, { passive: false });
+window.addEventListener('touchend', () => { if(currentMode === 1) isHooked = false; });
+
+function update() {
+    if (!isPaused) {
+        player.vy += 0.7; 
+        player.x += player.vx;
+        player.y += player.vy;
+        player.vx *= (currentMode === 1) ? 0.992 : 0.988; 
+
+        if (isHooked && currentHook && currentMode === 1) {
+            let dx = player.x - currentHook.x;
+            let dy = player.y - currentHook.y;
+            let distance = Math.hypot(dx, dy);
+            if (distance > player.dist) {
+                let angle = Math.atan2(dy, dx);
+                player.x = currentHook.x + Math.cos(angle) * player.dist;
+                player.y = currentHook.y + Math.sin(angle) * player.dist;
+                let dot = (player.vx * dx + player.vy * dy) / distance;
+                player.vx = (player.vx - (dot * dx) / distance) * 1.012;
+                player.vy = (player.vy - (dot * dy) / distance) * 1.012;
+            }
+        }
+
+        // בדיקת התנגשות במכשולים
+        obstacles.forEach(ob => {
+            if (player.x + 10 > ob.x && player.x - 10 < ob.x + ob.w &&
+                player.y + 10 > ob.y && player.y - 10 < ob.y + ob.h) resetPlayer();
+        });
+
+        // בדיקת פגיעה בטרמפולינות
+        trampolines.forEach(t => {
+            if (player.x + 10 > t.x && player.x - 10 < t.x + t.w &&
+                player.y + 10 > t.y && player.y - 10 < t.y + t.h) {
+                player.vy = -18; // הקפצה למעלה
+                player.vx += 5;  // תנופה קדימה
+                isHooked = false; // שחרור חבל אם היה תפוס
+            }
+        });
+
+        if (player.x > finishLineX) {
+            if (currentMode === 1) levelV1++; else levelV2++;
+            initLevel();
+        }
+
+        if (player.y > window.innerHeight + 500) resetPlayer();
+    }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function draw() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const offsetX = canvas.width / 4 - player.x;
+    
+    ctx.fillStyle = currentMode === 1 ? '#1a1a2e' : '#1e1111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    hooks.forEach(h => {
+        ctx.fillStyle = h.isLast ? '#f1c40f' : (currentMode === 1 ? '#4ecca3' : '#e74c3c');
+        ctx.beginPath(); ctx.arc(h.x + offsetX, h.y, 8, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // ציור טרמפולינות
+    ctx.fillStyle = '#3498db';
+    ctx.shadowBlur = 10; ctx.shadowColor = '#3498db';
+    trampolines.forEach(t => ctx.fillRect(t.x + offsetX, t.y, t.w, t.h));
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#ff4757';
+    obstacles.forEach(ob => ctx.fillRect(ob.x + offsetX, ob.y, ob.w, ob.h));
+
+    for(let i=0; i < canvas.height/30; i++) {
+        for(let j=0; j<3; j++) {
+            ctx.fillStyle = (i+j) % 2 === 0 ? '#fff' : '#000';
+            ctx.fillRect(finishLineX + offsetX + (j*30), i*30, 30, 30);
+        }
+    }
+
+    if (isHooked && currentHook) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(currentHook.x + offsetX, currentHook.y);
+        ctx.lineTo(player.x + offsetX, player.y); ctx.stroke();
+    }
+
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(player.x + offsetX, player.y, player.radius, 0, Math.PI * 2); ctx.fill();
+}
+
+initLevel();
+update();
+</script>
+</body>
+</html>
